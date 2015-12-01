@@ -1,2 +1,2 @@
-verbose = 2
-loglevel = 2
+verbose = 3
+loglevel = 0

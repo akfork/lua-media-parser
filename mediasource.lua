@@ -18,6 +18,9 @@ function mediaSource:open() end
 function mediaSource:close() end
 function mediaSource:read() end
 function mediaSource:seek() end
+function mediaSource:get_meta_table()
+	return self.source:get_meta_table()
+end
 
 function mediaSource:getFrames()
 	local currentSample = 0

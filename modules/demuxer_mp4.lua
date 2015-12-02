@@ -5,7 +5,7 @@ do
 
     -- moov trak mdia minf stbl
 
-    local mp4 = {
+    local _M = {
         sampleTable = {
             sampleSizes = {},
             sampleTimes = {},
@@ -14,55 +14,47 @@ do
             chunks = {},
             chunkOffsets = {},
         },
+        -- total chunk count
+        chunksCount = 0,
+        -- every chunk to sample data
+        chunksArray = {},
+
+        -- total samples count
+        samplesCount = 0,
+        -- every sample to chunk data
+        samplesArray = {},
+
         meta_table = {}
     }
 
-    function mp4:skipBytes(bytes, state)
+    function _M.skipBytes(self, bytes, state)
         state.offset = state.offset + bytes
         return self.source:seek(bytes)
     end
 
-    function mp4:getBytes(bytes, state)
+    function _M.getBytes(self, bytes, state)
         state.offset = state.offset + bytes
         return self.source:read(bytes)
     end
 
-    function mp4:read(sample)
+    function _M.read(self, sample)
         -- must be an iterator
         if self.samplesCount
                 and self.samplesCount > 0
                 and sample >= 0
                 and sample < self.samplesCount then
 
-            local samples = 0
-            local currentChunk = 0
-            local samplesInCurrentChunk = 0
             local extradata = ""
-            while samples < sample do
-                -- get samples for current chunk
-                currentChunk = currentChunk + 1
-                for var = 1, table.getn(self.sampleTable.chunks) do
-                    if self.sampleTable.chunks[var].firstChunk <= currentChunk
-                            and (var == table.getn(self.sampleTable.chunks)
-                            or self.sampleTable.chunks[var + 1].firstChunk > currentChunk) then
-
-                        samplesInCurrentChunk = self.sampleTable.chunks[var].samplesPerChunk
-                        samples = samples + self.sampleTable.chunks[var].samplesPerChunk
-                        break
-                    end
-                end
-            end
-            local sampleInChunk = samplesInCurrentChunk - (samples - sample)
+            local currentChunk = self.samplesArray[sample].chunk_index
             local chunkOffset = self.sampleTable.chunkOffsets[currentChunk]
             -- sum of all chunk samples
             local offsetInChunk = 0
-            local currentChunkSample = samples - samplesInCurrentChunk + 1
+            local currentChunkSample = self.chunksArray[currentChunk].first_sample_index
             while currentChunkSample < sample do
                 offsetInChunk = offsetInChunk + self.sampleTable.sampleSizes[currentChunkSample]
                 currentChunkSample = currentChunkSample + 1
             end
             local fullOffset = chunkOffset + offsetInChunk
-            self.source:seek(fullOffset)
             extradata = " "
                     .. "\t"
                     .. (self.sampleTable.sampleTimes[sample]
@@ -78,37 +70,40 @@ do
                     .. " bytes "
                     .. "\t"
             if self.sampleTable.syncSamples[sample] ~= nil then
-                extradata = extradata
-                        .. "SYNC"
+                extradata = extradata .. "SYNC"
+                local frame_meta = { (self.sampleTable.sampleTimes[sample]
+                    and (math.floor(self.sampleTable.sampleTimes[sample])
+                    + (self.sampleTable.sampleDeltaTimes[sample] or 0))
+                    or "undefined"), fullOffset}
+                table.insert(self.meta_table, frame_meta)
             end
             if verbose >= 3 then
                 extradata = extradata
                         .. "\t"
                         .. "offset :" .. tostring(fullOffset)
             end
-            local frame_meta = { (self.sampleTable.sampleTimes[sample]
-                    and (math.floor(self.sampleTable.sampleTimes[sample])
-                    + (self.sampleTable.sampleDeltaTimes[sample] or 0))
-                    or "undefined"), fullOffset}
-            table.insert(self.meta_table, frame_meta)
+            --local frame_meta = { (self.sampleTable.sampleTimes[sample]
+            --        and (math.floor(self.sampleTable.sampleTimes[sample])
+            --        + (self.sampleTable.sampleDeltaTimes[sample] or 0))
+            --        or "undefined"), fullOffset}
+            --table.insert(self.meta_table, frame_meta)
             return self.source.fh, extradata
         end
     end
 
-    function mp4:get_meta_table()
+    function _M.get_meta_table(self)
         return self.meta_table
---        return 'hello'
     end
 
-    function mp4:open()
+    function _M.open(self)
         self.source:open()
     end
 
-    function mp4:close()
+    function _M.close(self)
         self.source:close()
     end
 
-    function mp4:adjustParseState(parseState)
+    function _M.adjustParseState(self, parseState)
         for val = 1, parseState.level do
             if not parseState.offsets[val] then
                 parseState.offsets[val] = 0
@@ -125,7 +120,7 @@ do
         end
     end
 
-    function mp4:parseChunk(parseState)
+    function _M.parseChunk(self, parseState)
         parseState.offset = 0
         local size = convertToSize(self:getBytes(4, parseState))
         parseState.sizes[parseState.level] = size
@@ -220,14 +215,16 @@ do
                         self.sampleTable.chunks[var] = {
                             firstChunk = convertToSize(self:getBytes(4, parseState)),
                             samplesPerChunk = convertToSize(self:getBytes(4, parseState)),
+                            samplesDespIndex = convertToSize(self:getBytes(4, parseState)),
                         }
-                        self:skipBytes(4, parseState)
+                        --self:skipBytes(4, parseState)
                     end
                 end
                 if atom == "stco" or atom == "co64" then
                     -- sample to chunks offset
                     self:skipBytes(4, parseState)
                     local entries = convertToSize(self:getBytes(4, parseState))
+                    self.chunksCount = entries
                     for var = 1, entries do
                         local offset
                         if atom == "stco" then
@@ -237,6 +234,35 @@ do
                         end
                         self.sampleTable.chunkOffsets[var] = offset
                     end
+
+                    -- construt ChunksArray
+                    local last_chunk_no = self.chunksCount
+                    for i = table.getn(self.sampleTable.chunks), 1, -1 do
+                        local begin_chunk_no = self.sampleTable.chunks[i].firstChunk
+                        for j = begin_chunk_no, last_chunk_no do
+                            self.chunksArray[j] = {
+                                sample_count = self.sampleTable.chunks[i].samplesPerChunk,
+                                sample_desp_index = self.sampleTable.chunks[i].samplesDespIndex,
+                            }
+                        end
+                        last_chunk_no = begin_chunk_no - 1
+                    end
+
+                    -- construct SamplesArray
+                    local sample_index = 1
+                    for i = 1, self.chunksCount do
+                        self.chunksArray[i].first_sample_index = sample_index
+                        local index_in_chunk = 1
+                        for j = 1, self.chunksArray[i].sample_count do
+                            self.samplesArray[sample_index] = {
+                                chunk_index = i,
+                                index_in_chunk = index_in_chunk
+                            }
+                            sample_index = sample_index + 1
+                            index_in_chunk = index_in_chunk + 1
+                        end
+                    end
+
                 end
                 if atom == "stts" then
                     self:skipBytes(4, parseState)
@@ -292,15 +318,15 @@ do
         return self:parseChunk(parseState)
     end
 
-    function mp4:parse()
+    function _M.parse(self)
         self.level = 1
         self.source:open()
         self:parseChunk({ level = 1, offset = 0, offsets = {}, sizes = {}, })
         self.source:close()
     end
 
-    function mp4:dump()
+    function _M.dump(self)
     end
 
-    return mp4
+    return _M
 end

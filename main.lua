@@ -1,31 +1,36 @@
 -- Main file
 -- Usage lua main.lua <source>
 
-local cjson = require "cjson"
-local cjson2 = cjson.new()
 local cjson_safe = require "cjson.safe"
 
-opts = loadfile("options.lua")
-if opts then opts() end
+verbose = 3
+loglevel = 0
 
-dofile("log.lua")
-dofile("mediasource.lua")
-
-args = args or {...}
-s = args[1]
-
-if not s then
-	loge("no uri provided")
-	os.exit(1)
+local createLog = function(c, level)
+	fstr = "function log"
+		.. c
+		.. "(message) if loglevel >= "
+		.. level
+		.. " then print(\""
+		.. string.upper(c)
+		.. " : \" .. message) end end"
+	newlog = loadstring(fstr)
+	newlog()
 end
 
-framesProvider = mediaSource:createSource(s)
+createLog("e", 0)
+createLog("w", 1)
+createLog("i", 2)
+
+local mediaSource = require "mediasource"
+
+local framesProvider = mediaSource:createSource("mpeg4conformance.mp4")
 
 for frame in framesProvider:getFrames() do
---	frame:dump()
+    --frame:dump()
 end
 
-r = framesProvider:get_meta_table()
+local r = framesProvider:get_meta_table()
 
 print(cjson_safe.encode(r))
 

@@ -1,25 +1,25 @@
 
 do
-	local file = {}
+	local _M = {}
 
-	function file:open()
+	function _M.open(self)
 		self.fh = io.open(self.uri, "rb")
 		return self.fh
 	end
 
-	function file:close()
+	function _M.close(self)
 		if self.fh then
 			self.fh:close()
 		end
 	end
 
-	function file:read(bytes)
+	function _M.read(self, bytes)
 		if self.fh and bytes ~= 0  then
 			return self.fh:read(bytes)
 		end
 	end
 
-	function file:seek(bytes)
+	function _M.seek(self, bytes)
 		if self.fh then
 			if bytes and bytes ~= 0 then
 				self:read(bytes)
@@ -29,12 +29,12 @@ do
 		end
 	end
 
-	function file:parse()
+	function _M.parse(self)
 		self.level = 3
 		if string.find(self.uri, "%.%w+$") then
 			self.content = string.sub(string.sub(self.uri, string.find(self.uri, "%.%w+$")), 2)
 		end
 	end
 
-	return file
+	return _M
 end
